@@ -24,6 +24,7 @@ from imblearn.over_sampling import ADASYN
 from imblearn.over_sampling import SMOTE, BorderlineSMOTE, SVMSMOTE, SMOTENC
 from imblearn.base import BaseSampler
 from collections import Counter
+import itertools
 
 
 # Make an identity sampler
@@ -107,6 +108,8 @@ class Sampling:
         #self.adasyn_smote()
         #self.smote_alt()
         #self.smote_nc()
+
+        self.show_scores()
 
     def load_data(self):
         self.dataset = pd.read_csv('kddcup.data_10_percent')
@@ -241,6 +244,7 @@ class Sampling:
 
         y_pred = clf.predict(self.x)
         self.add_score(clf, self.x, self.y, y_pred)
+        self.show_cm_multiclass(self.y, y_pred)
 
         self.plot_decision_function(self.x, self.y, clf, ax1)
         ax1.set_title('Linear SVC with y={}'.format(Counter(self.y)))
@@ -318,12 +322,55 @@ class Sampling:
         print(x_res[-5:])
 
     def add_score(self, clf, x, y, y_pred):
-        self.score_dict['recall'] = np.append(self.score_dict['recall'], recall_score(y, y_pred))
-        self.score_dict['precision'] = np.append(self.score_dict['precision'], precision_score(y, y_pred))
-        self.score_dict['f1'] = np.append(self.score_dict['f1'], f1_score(y, y_pred))
-        self.score_dict['roc_auc'] = np.append(self.score_dict['roc_auc'], roc_auc_score(y, y_pred))
+        self.score_dict['recall'] = np.append(self.score_dict['recall'], recall_score(y, y_pred, average=None))
+        self.score_dict['precision'] = np.append(self.score_dict['precision'], precision_score(y, y_pred,  average=None))
+        self.score_dict['f1'] = np.append(self.score_dict['f1'], f1_score(y, y_pred,  average=None))
         self.score_dict['accuracy'] = np.append(self.score_dict['accuracy'],
                                            cross_val_score(clf, x, y, scoring='accuracy', cv=self.folds))
 
+    def show_scores(self):
+        for score_name, scores in self.score_dict.items():
+            print("%s: %s" % (score_name, scores))
+        print('___________________________________________________________')
+
+    def show_cm_multiclass(self, y, y_pred):
+        cm = confusion_matrix(y, y_pred, labels=[0, 1, 2, 3, 4])
+        self.plot_confusion_matrix(cm, classes=[0, 1, 2, 3, 4], title='Confusion matrix, without normalization')
+
+
+    def plot_confusion_matrix(self, cm, classes,
+                              normalize=False,
+                              title='Confusion matrix',
+                              cmap=plt.cm.Blues):
+        """
+        This function prints and plots the confusion matrix.
+        Normalization can be applied by setting `normalize=True`.
+        """
+        if normalize:
+            cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+            print("Normalized confusion matrix")
+        else:
+            print('Confusion matrix, without normalization')
+
+        print(cm)
+
+        plt.imshow(cm, interpolation='nearest', cmap=cmap)
+        plt.title(title)
+        plt.colorbar()
+        tick_marks = np.arange(len(classes))
+        plt.xticks(tick_marks, classes, rotation=45)
+        plt.yticks(tick_marks, classes)
+
+        fmt = '.2f' if normalize else 'd'
+        thresh = cm.max() / 2.
+        for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+            plt.text(j, i, format(cm[i, j], fmt),
+                     horizontalalignment="center",
+                     color="white" if cm[i, j] > thresh else "black")
+
+        plt.ylabel('True label')
+        plt.xlabel('Predicted label')
+        plt.tight_layout()
+        plt.show()
 
 sampling = Sampling()
