@@ -6,34 +6,28 @@ Example sampling techniques using KDD Cup 1999 IDS dataset
 The following examples demonstrate various under and over-sampling techniques
 for a dataset in which column is extremely imbalanced different over-sampling algorithms available in the imbalanced-learn package.
 
+Visualisations using both linear and radial functions to illustrate separability
+
 """
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.svm import LinearSVC
+from sklearn.svm import LinearSVC, SVC
 from collections import OrderedDict
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn import preprocessing
 from sklearn.metrics import *
 from sklearn.model_selection import cross_val_score
-from imblearn.pipeline import make_pipeline
-from imblearn.over_sampling import RandomOverSampler
-from imblearn.over_sampling import ADASYN
-from imblearn.over_sampling import SMOTE, BorderlineSMOTE, SVMSMOTE, SMOTENC
-from imblearn.base import BaseSampler
+from imblearn.over_sampling import RandomOverSampler, ADASYN, SMOTE, BorderlineSMOTE, SVMSMOTE, SMOTENC
 from collections import Counter
 import itertools
 
 
-# Make an identity sampler
-class FakeSampler(BaseSampler):
-
-    _sampling_type = 'bypass'
-
-    def _fit_resample(self, X, y):
-        return X, y
+class Original:
+    def fit_resample(self, x, y):
+        return x, y
 
 
 class Sampling:
@@ -54,7 +48,7 @@ class Sampling:
                         'dst_host_rerror_rate', 'dst_host_srv_rerror_rate', 'label']
         self.attack_category_int = [0, 1, 2, 3, 4]
         self.attack_category = ['normal', 'dos', 'u2r', 'r2l', 'probe']
-        self.weight = 0.3
+        self.weight = 0.1  # Full run 1, testing 0.1, 0.3 etc
         self.class_colours = np.array(["red", "green", "blue", "orange", "yellow"])
         self.ac_count = {}
         self.level_00 = ['attack_category']
@@ -101,15 +95,42 @@ class Sampling:
         self.x = self.encode(self.x)
 
         # Reduce dimensionality with PCA for visualisation
-        self.x = self.pca(self.x)
+        #self.x = self.pca(self.x)
 
         # Sampling options
-        self.random_oversampling()
-        #self.adasyn_smote()
-        #self.smote_alt()
+        titles = ('Original', 'Random', 'SMOTE', 'ADASYN', 'BorderlineSMOTE-1', 'BorderlineSMOTE-2', 'SVMSMOTE')
+        for stype, sampler in zip(titles, (Original(),
+                                           RandomOverSampler(),
+                                           SMOTE(random_state=0),
+                                           ADASYN(random_state=self.random_state),
+                                           BorderlineSMOTE(random_state=self.random_state, kind='borderline-1'),
+                                           BorderlineSMOTE(random_state=self.random_state, kind='borderline-2'),
+                                           SVMSMOTE(random_state=self.random_state))):
+            self.sample(stype, sampler)
+
+
         #self.smote_nc()
 
-        self.show_scores()
+        #self.show_scores()
+
+    @staticmethod
+    def pca(ds):
+        pca = PCA(n_components=2)
+        ds = pca.fit_transform(ds)
+        return ds
+
+    # Plot classifier decision function to illustrate characteristics and sampling
+    @staticmethod
+    def plot_decision_function(x, y, clf, ax):
+        plot_step = 0.02
+        x_min, x_max = x[:, 0].min() - 1, x[:, 0].max() + 1
+        y_min, y_max = x[:, 1].min() - 1, x[:, 1].max() + 1
+        xx, yy = np.meshgrid(np.arange(x_min, x_max, plot_step),
+                             np.arange(y_min, y_max, plot_step))
+        z = clf.predict(np.c_[xx.ravel(), yy.ravel()])
+        z = z.reshape(xx.shape)
+        ax.contourf(xx, yy, z, alpha=0.4)
+        ax.scatter(x[:, 0], x[:, 1], alpha=0.8, c=y, edgecolor='k')
 
     def load_data(self):
         self.dataset = pd.read_csv('kddcup.data_10_percent')
@@ -190,13 +211,13 @@ class Sampling:
     def encode(self, ds):
         le = preprocessing.LabelEncoder()
         ds = ds.apply(le.fit_transform)
+
+        for col in ds.columns:
+            if ds[col].dtype == np.int64:
+                ds[col] = ds[col].astype(np.float64)
+
         sc = StandardScaler()
         ds = pd.DataFrame(sc.fit_transform(ds), columns=ds.columns)
-        return ds
-
-    def pca(self, ds):
-        pca = PCA(n_components=2)
-        ds = pca.fit_transform(ds)
         return ds
 
     def row_target_count_by_group(self, level, by):
@@ -207,114 +228,37 @@ class Sampling:
         df_flat = df.reset_index()
         print(df_flat)
 
-    ###############################################################################
-    # The following function will be used to plot the sample space after resampling
-    # to illustrate the characterisitic of an algorithm.
-    @staticmethod
-    def plot_resampling(x, y, sampling, ax):
-        x_res, y_res = sampling.fit_resample(x, y)
-        ax.scatter(x_res[:, 0], x_res[:, 1], c=y_res, alpha=0.8, edgecolor='k')
-        # make nice plotting
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.get_xaxis().tick_bottom()
-        ax.get_yaxis().tick_left()
-        ax.spines['left'].set_position(('outward', 10))
-        ax.spines['bottom'].set_position(('outward', 10))
-        return Counter(y_res)
+    def sample(self, stype, sampler):
+        x, y = sampler.fit_resample(self.x, self.y)
+        x = self.pca(x)
 
-    ###############################################################################
-    # The following function will be used to plot the decision function of a
-    # classifier given some data.
-    @staticmethod
-    def plot_decision_function(x, y, clf, ax):
-        plot_step = 0.02
-        x_min, x_max = x[:, 0].min() - 1, x[:, 0].max() + 1
-        y_min, y_max = x[:, 1].min() - 1, x[:, 1].max() + 1
-        xx, yy = np.meshgrid(np.arange(x_min, x_max, plot_step),
-                             np.arange(y_min, y_max, plot_step))
-        z = clf.predict(np.c_[xx.ravel(), yy.ravel()])
-        z = z.reshape(xx.shape)
-        ax.contourf(xx, yy, z, alpha=0.4)
-        ax.scatter(x[:, 0], x[:, 1], alpha=0.8, c=y, edgecolor='k')
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(19, 11))
 
-    def random_oversampling(self):
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
-        clf = LinearSVC().fit(self.x, self.y)
+        # Build title with attack category sample counts
+        title_suffix = ''
+        class_sample_count = Counter(y)
+        for cls, samples in class_sample_count.items():
+            title_suffix = title_suffix + str(cls) + ':' + str(samples) + '  '
 
-        y_pred = clf.predict(self.x)
-        self.add_score(clf, self.x, self.y, y_pred)
-        self.show_cm_multiclass(self.y, y_pred)
+        # Linear
+        clf = LinearSVC(dual=False).fit(x, y)
+        self.plot_decision_function(x, y, clf, ax1)
+        ax1.set_title(sampler.__class__.__name__ + ' Linear y={}'.format(title_suffix), size=16)
 
-        self.plot_decision_function(self.x, self.y, clf, ax1)
-        ax1.set_title('Linear SVC with y={}'.format(Counter(self.y)))
-        pipe = make_pipeline(RandomOverSampler(random_state=0), LinearSVC())
-        pipe.fit(self.x, self.y)
-        self.plot_decision_function(self.x, self.y, pipe, ax2)
-        ax2.set_title('Decision function for RandomOverSampler')
+        # SVC with RBF
+        clf = SVC(kernel='rbf', gamma=10, random_state=self.random_state).fit(x, y)
+        # y_pred = clf.predict(self.x)
+        self.plot_decision_function(x, y, clf, ax2)
+        ax2.set_title(sampler.__class__.__name__ + ' RBF y={}'.format(title_suffix), size=16)
+
         fig.tight_layout()
-        plt.show()
-
-    def adasyn_smote(self):
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 15))
-        sampler = FakeSampler()
-        clf = make_pipeline(sampler, LinearSVC())
-        self.plot_resampling(self.x, self.y, sampler, ax1)
-        ax1.set_title('Original data - y={}'.format(Counter(self.y)))
-
-        ax_arr = (ax2, ax3, ax4)
-        for ax, sampler in zip(ax_arr, (RandomOverSampler(random_state=0),
-                                        SMOTE(random_state=0),
-                                        ADASYN(random_state=0))):
-            clf = make_pipeline(sampler, LinearSVC())
-            clf.fit(self.x, self.y)
-            self.plot_resampling(self.x, self.y, sampler, ax)
-            ax.set_title('Resampling using {}'.format(sampler.__class__.__name__))
-        fig.tight_layout()
-        plt.show()
-
-        # Plot decision boundaries
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
-        clf = LinearSVC().fit(self.x, self.y)
-        self.plot_decision_function(self.x, self.y, clf, ax1)
-        ax1.set_title('Linear SVC with y={}'.format(Counter(self.y)))
-        sampler = SMOTE()
-        clf = make_pipeline(sampler, LinearSVC())
-        clf.fit(self.x, self.y)
-        self.plot_decision_function(self.x, self.y, clf, ax2)
-        ax2.set_title('Decision function for {}'.format(sampler.__class__.__name__))
-        sampler = ADASYN()
-        clf = make_pipeline(sampler, LinearSVC())
-        clf.fit(self.x, self.y)
-        self.plot_decision_function(self.x, self.y, clf, ax3)
-        ax3.set_title('Decision function for {}'.format(sampler.__class__.__name__))
-        fig.tight_layout()
-        plt.show()
-
-    #Alternative SMOTE samppling methods
-    def smote_alt(self):
-        fig, ((ax1, ax2), (ax3, ax4),
-              (ax5, ax6), (ax7, ax8)) = plt.subplots(4, 2, figsize=(15, 30))
-        ax_arr = ((ax1, ax2), (ax3, ax4), (ax5, ax6), (ax7, ax8))
-        for ax, sampler in zip(ax_arr,
-                               (SMOTE(random_state=0),
-                                BorderlineSMOTE(random_state=0, kind='borderline-1'),
-                                BorderlineSMOTE(random_state=0, kind='borderline-2'),
-                                SVMSMOTE(random_state=0))):
-            clf = make_pipeline(sampler, LinearSVC())
-            clf.fit(self.x, self.y)
-            self.plot_decision_function(self.x, self.y, clf, ax[0])
-            ax[0].set_title('Decision function for {}'.format(
-                sampler.__class__.__name__))
-            self.plot_resampling(self.x, self.y, sampler, ax[1])
-            ax[1].set_title('Resampling using {}'.format(sampler.__class__.__name__))
-        fig.tight_layout()
+        plt.savefig(fname='plots/' + sampler.__class__.__name__, dpi=1000, format='png')
         plt.show()
 
     # Unlike SMOTE, SMOTENC can handle mix continuous/categorical features
     def smote_nc(self):
         self.set_x_y(self.dataset)
-        smote_nc = SMOTENC(categorical_features=[1, 2, 3], random_state=0)
+        smote_nc = SMOTENC(categorical_features=[1, 2, 3], random_state=self.random_state)
         x_res, y_res = smote_nc.fit_resample(self.x, self.y)
         print('Dataset after resampling:')
         print(sorted(Counter(y_res).items()))
