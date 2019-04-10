@@ -14,7 +14,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.svm import LinearSVC, SVC
-from collections import OrderedDict
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn import preprocessing
@@ -48,17 +47,14 @@ class Sampling:
                         'dst_host_rerror_rate', 'dst_host_srv_rerror_rate', 'label']
         self.attack_category_int = [0, 1, 2, 3, 4]
         self.attack_category = ['normal', 'dos', 'u2r', 'r2l', 'probe']
-        self.weight = 0.1  # Full run 1, testing 0.1, 0.3 etc
+        self.weight = 0.2  # Full run 1, testing 0.1, 0.3 etc
         self.class_colours = np.array(["red", "green", "blue", "orange", "yellow"])
         self.ac_count = {}
         self.level_00 = ['attack_category']
         self.level_01 = ['attack_category', 'label']
         self.random_state = 20
         self.folds = 10
-        # create score dictionary
-        self.scores = ['recall', 'precision', 'f1', 'roc_auc', 'accuracy']
-        self.values = [np.array([]) for i in range(0, len(self.scores))]
-        self.score_dict = OrderedDict(zip(self.scores, self.values))
+        self.scores = {}
 
 
         # Load data then set column names
@@ -98,20 +94,18 @@ class Sampling:
         #self.x = self.pca(self.x)
 
         # Sampling options
-        titles = ('Original', 'Random', 'SMOTE', 'ADASYN', 'BorderlineSMOTE-1', 'BorderlineSMOTE-2', 'SVMSMOTE')
-        for stype, sampler in zip(titles, (Original(),
-                                           RandomOverSampler(),
-                                           SMOTE(random_state=0),
-                                           ADASYN(random_state=self.random_state),
-                                           BorderlineSMOTE(random_state=self.random_state, kind='borderline-1'),
-                                           BorderlineSMOTE(random_state=self.random_state, kind='borderline-2'),
-                                           SVMSMOTE(random_state=self.random_state))):
-            self.sample(stype, sampler)
-
+        # for sampler in (Original(),
+        #                 RandomOverSampler(),
+        #                 SMOTE(random_state=0),
+        #                 ADASYN(random_state=self.random_state),
+        #                 BorderlineSMOTE(random_state=self.random_state, kind='borderline-1'),
+        #                 BorderlineSMOTE(random_state=self.random_state, kind='borderline-2'),
+        #                 SVMSMOTE(random_state=self.random_state)):
+        self.sample(Original())
 
         #self.smote_nc()
 
-        #self.show_scores()
+        self.show_scores()
 
     @staticmethod
     def pca(ds):
@@ -228,7 +222,7 @@ class Sampling:
         df_flat = df.reset_index()
         print(df_flat)
 
-    def sample(self, stype, sampler):
+    def sample(self, sampler):
         x, y = sampler.fit_resample(self.x, self.y)
         x = self.pca(x)
 
@@ -241,19 +235,30 @@ class Sampling:
             title_suffix = title_suffix + str(cls) + ':' + str(samples) + '  '
 
         # Linear
-        clf = LinearSVC(dual=False).fit(x, y)
-        self.plot_decision_function(x, y, clf, ax1)
-        ax1.set_title(sampler.__class__.__name__ + ' Linear y={}'.format(title_suffix), size=16)
+        fn_linear = 'Linear'
+        clf_linear_svc = LinearSVC(dual=False).fit(x, y)
+        self.plot_decision_function(x, y, clf_linear_svc, ax1)
+        linear_title = sampler.__class__.__name__ + ' ' + fn_linear + ' y={}'.format(title_suffix)
+        ax1.set_title(linear_title, size=16)
 
         # SVC with RBF
-        clf = SVC(kernel='rbf', gamma=10, random_state=self.random_state).fit(x, y)
-        # y_pred = clf.predict(self.x)
-        self.plot_decision_function(x, y, clf, ax2)
-        ax2.set_title(sampler.__class__.__name__ + ' RBF y={}'.format(title_suffix), size=16)
+        fn_rbf = 'RBF'
+        clf_rbf_svc = SVC(kernel='rbf', gamma=2, random_state=self.random_state).fit(x, y)
+        self.plot_decision_function(x, y, clf_rbf_svc, ax2)
+        rbf_title = sampler.__class__.__name__ + ' ' + fn_rbf + ' y={}'.format(title_suffix)
+        ax2.set_title(rbf_title, size=16)
 
         fig.tight_layout()
-        plt.savefig(fname='plots/' + sampler.__class__.__name__, dpi=1000, format='png')
+        plt.savefig(fname='plots/' + 'DF - ' + sampler.__class__.__name__, dpi=300, format='png')
         plt.show()
+
+        y_pred = clf_linear_svc.predict(x)
+        self.show_cm_multiclass(y, y_pred, linear_title)
+        self.register_score(sampler, fn_linear, clf_linear_svc, x, y, y_pred)
+
+        y_pred = clf_rbf_svc.predict(x)
+        self.show_cm_multiclass(y, y_pred, rbf_title)
+        self.register_score(sampler, fn_rbf, clf_rbf_svc, x, y, y_pred)
 
     # Unlike SMOTE, SMOTENC can handle mix continuous/categorical features
     def smote_nc(self):
@@ -265,37 +270,25 @@ class Sampling:
         print('SMOTE-NC will generate categories for the categorical features:')
         print(x_res[-5:])
 
-    def add_score(self, clf, x, y, y_pred):
-        self.score_dict['recall'] = np.append(self.score_dict['recall'], recall_score(y, y_pred, average=None))
-        self.score_dict['precision'] = np.append(self.score_dict['precision'], precision_score(y, y_pred,  average=None))
-        self.score_dict['f1'] = np.append(self.score_dict['f1'], f1_score(y, y_pred,  average=None))
-        self.score_dict['accuracy'] = np.append(self.score_dict['accuracy'],
-                                           cross_val_score(clf, x, y, scoring='accuracy', cv=self.folds))
+    def register_score(self, sampler, fn, clf, x, y, y_pred):
+        # JP - change to ordered dict to remember insert order
+        prefix = sampler.__class__.__name__ + '_' + fn + '_'
+        self.scores[prefix + 'recall'] = recall_score(y, y_pred, average=None)
+        self.scores[prefix + 'precision'] = precision_score(y, y_pred,  average=None)
+        self.scores[prefix + 'f1'] = f1_score(y, y_pred,  average=None)
+        self.scores[prefix + 'accuracy'] = cross_val_score(clf, x, y, scoring='accuracy', cv=self.folds)
 
     def show_scores(self):
-        for score_name, scores in self.score_dict.items():
-            print("%s: %s" % (score_name, scores))
-        print('___________________________________________________________')
+        for sid, score in self.scores.items():
+            print('ID: {}'.format(sid))
+            print('\t\tScore{}'.format(score))
 
-    def show_cm_multiclass(self, y, y_pred):
+    def show_cm_multiclass(self, y, y_pred, title):
         cm = confusion_matrix(y, y_pred, labels=[0, 1, 2, 3, 4])
-        self.plot_confusion_matrix(cm, classes=[0, 1, 2, 3, 4], title='Confusion matrix, without normalization')
+        self.plot_confusion_matrix(cm, classes=[0, 1, 2, 3, 4], title=title)
 
-
-    def plot_confusion_matrix(self, cm, classes,
-                              normalize=False,
-                              title='Confusion matrix',
-                              cmap=plt.cm.Blues):
-        """
-        This function prints and plots the confusion matrix.
-        Normalization can be applied by setting `normalize=True`.
-        """
-        if normalize:
-            cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-            print("Normalized confusion matrix")
-        else:
-            print('Confusion matrix, without normalization')
-
+    def plot_confusion_matrix(self, cm, classes, title='Confusion matrix'):
+        cmap = plt.cm.Blues
         print(cm)
 
         plt.imshow(cm, interpolation='nearest', cmap=cmap)
@@ -305,7 +298,7 @@ class Sampling:
         plt.xticks(tick_marks, classes, rotation=45)
         plt.yticks(tick_marks, classes)
 
-        fmt = '.2f' if normalize else 'd'
+        fmt = 'd'
         thresh = cm.max() / 2.
         for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
             plt.text(j, i, format(cm[i, j], fmt),
@@ -315,6 +308,8 @@ class Sampling:
         plt.ylabel('True label')
         plt.xlabel('Predicted label')
         plt.tight_layout()
+        plt.savefig(fname='plots/' + 'CM - ' + title, dpi=300, format='png')
         plt.show()
+
 
 sampling = Sampling()
