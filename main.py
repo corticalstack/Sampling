@@ -4,7 +4,8 @@ Example sampling techniques using KDD Cup 1999 IDS dataset
 ==========================================================
 
 The following examples demonstrate various under and over-sampling techniques
-for a dataset in which column is extremely imbalanced different over-sampling algorithms available in the imbalanced-learn package.
+for a dataset in which column is extremely imbalanced different over-sampling algorithms available in the
+imbalanced-learn package.
 
 Visualisations using both linear and radial functions to illustrate separability
 
@@ -22,6 +23,9 @@ from sklearn.model_selection import cross_val_score
 from imblearn.over_sampling import RandomOverSampler, ADASYN, SMOTE, BorderlineSMOTE, SVMSMOTE, SMOTENC
 from collections import Counter
 import itertools
+from collections import OrderedDict
+import time
+import warnings
 
 
 class Original:
@@ -54,8 +58,7 @@ class Sampling:
         self.level_01 = ['attack_category', 'label']
         self.random_state = 20
         self.folds = 10
-        self.scores = {}
-
+        self.scores = OrderedDict()
 
         # Load data then set column names
         self.load_data()
@@ -78,32 +81,30 @@ class Sampling:
 
         self.row_target_count_by_group(self.level_00, ['target'])  # Count by attack category majority/minority classes
         self.row_target_count_by_group(self.level_01, ['target'])  # More detailed row count by attack category/label
-        self.dataset.attack_category.value_counts().plot(kind='bar', title='Count (attack_category)')
+        self.dataset.attack_category.value_counts().plot(kind='bar', title='Original Count (attack_category)')
         plt.show()
 
+        # Re-weight dataset (reduce samples per attack category, specifically for testing purposes)
         self.dataset = self.weight_attack_category(self.weight)
-        self.row_target_count_by_group(self.level_00, ['target'])
-        self.row_target_count_by_group(self.level_01, ['target'])
-        self.dataset.attack_category.value_counts().plot(kind='bar', title='Count (attack_category)')
-        plt.show()
+        if self.weight != 1.0:
+            self.row_target_count_by_group(self.level_00, ['target'])
+            self.row_target_count_by_group(self.level_01, ['target'])
+            self.dataset.attack_category.value_counts().plot(kind='bar', title='Re-weighted Count (attack_category)')
+            plt.show()
 
         self.set_x_y(self.dataset)
         self.x = self.encode(self.x)
 
-        # Reduce dimensionality with PCA for visualisation
-        #self.x = self.pca(self.x)
-
         # Sampling options
-        # for sampler in (Original(),
-        #                 RandomOverSampler(),
-        #                 SMOTE(random_state=0),
-        #                 ADASYN(random_state=self.random_state),
-        #                 BorderlineSMOTE(random_state=self.random_state, kind='borderline-1'),
-        #                 BorderlineSMOTE(random_state=self.random_state, kind='borderline-2'),
-        #                 SVMSMOTE(random_state=self.random_state)):
-        self.sample(Original())
-
-        #self.smote_nc()
+        for sampler in (Original(),
+                        RandomOverSampler(),
+                        SMOTE(random_state=0),
+                        ADASYN(random_state=self.random_state),
+                        BorderlineSMOTE(random_state=self.random_state, kind='borderline-1'),
+                        BorderlineSMOTE(random_state=self.random_state, kind='borderline-2'),
+                        SVMSMOTE(random_state=self.random_state),
+                        SMOTENC(categorical_features=[1, 2, 3], random_state=self.random_state)):
+            self.sample(sampler)
 
         self.show_scores()
 
@@ -125,6 +126,27 @@ class Sampling:
         z = z.reshape(xx.shape)
         ax.contourf(xx, yy, z, alpha=0.4)
         ax.scatter(x[:, 0], x[:, 1], alpha=0.8, c=y, edgecolor='k')
+
+    @staticmethod
+    def plot_confusion_matrix(cm, classes, title='Confusion matrix'):
+        plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+        plt.title(title)
+        plt.colorbar()
+        tick_marks = np.arange(len(classes))
+        plt.xticks(tick_marks, classes, rotation=45)
+        plt.yticks(tick_marks, classes)
+
+        thresh = cm.max() / 2.
+        for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+            plt.text(j, i, format(cm[i, j], 'd'),
+                     horizontalalignment="center",
+                     color="white" if cm[i, j] > thresh else "black")
+
+        plt.ylabel('True label')
+        plt.xlabel('Predicted label')
+        plt.tight_layout()
+        plt.savefig(fname='plots/' + 'CM - ' + title, dpi=300, format='png')
+        plt.show()
 
     def load_data(self):
         self.dataset = pd.read_csv('kddcup.data_10_percent')
@@ -223,7 +245,10 @@ class Sampling:
         print(df_flat)
 
     def sample(self, sampler):
+        start = time.time()
         x, y = sampler.fit_resample(self.x, self.y)
+
+        # Reduce dimensionality with PCA for visualisation
         x = self.pca(x)
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(19, 11))
@@ -260,56 +285,38 @@ class Sampling:
         self.show_cm_multiclass(y, y_pred, rbf_title)
         self.register_score(sampler, fn_rbf, clf_rbf_svc, x, y, y_pred)
 
-    # Unlike SMOTE, SMOTENC can handle mix continuous/categorical features
-    def smote_nc(self):
-        self.set_x_y(self.dataset)
-        smote_nc = SMOTENC(categorical_features=[1, 2, 3], random_state=self.random_state)
-        x_res, y_res = smote_nc.fit_resample(self.x, self.y)
-        print('Dataset after resampling:')
-        print(sorted(Counter(y_res).items()))
-        print('SMOTE-NC will generate categories for the categorical features:')
-        print(x_res[-5:])
+        end = time.time()
+        print(sampler.__class__.__name__, 'sample and evaluation time -', end - start, 'seconds')
 
     def register_score(self, sampler, fn, clf, x, y, y_pred):
-        # JP - change to ordered dict to remember insert order
         prefix = sampler.__class__.__name__ + '_' + fn + '_'
-        self.scores[prefix + 'recall'] = recall_score(y, y_pred, average=None)
-        self.scores[prefix + 'precision'] = precision_score(y, y_pred,  average=None)
-        self.scores[prefix + 'f1'] = f1_score(y, y_pred,  average=None)
-        self.scores[prefix + 'accuracy'] = cross_val_score(clf, x, y, scoring='accuracy', cv=self.folds)
+
+        # Warnings caught to suppress issues with minority classes having no predicted label values
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.scores[prefix + 'recall'] = recall_score(y, y_pred, average=None)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.scores[prefix + 'precision'] = precision_score(y, y_pred,  average=None)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.scores[prefix + 'f1'] = f1_score(y, y_pred,  average=None)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.scores[prefix + 'accuracy'] = cross_val_score(clf, x, y, scoring='accuracy', cv=self.folds)
 
     def show_scores(self):
+        print('--- Prediction Scores')
         for sid, score in self.scores.items():
-            print('ID: {}'.format(sid))
+            print('\nID: {}'.format(sid))
             print('\t\tScore{}'.format(score))
 
     def show_cm_multiclass(self, y, y_pred, title):
         cm = confusion_matrix(y, y_pred, labels=[0, 1, 2, 3, 4])
         self.plot_confusion_matrix(cm, classes=[0, 1, 2, 3, 4], title=title)
-
-    def plot_confusion_matrix(self, cm, classes, title='Confusion matrix'):
-        cmap = plt.cm.Blues
-        print(cm)
-
-        plt.imshow(cm, interpolation='nearest', cmap=cmap)
-        plt.title(title)
-        plt.colorbar()
-        tick_marks = np.arange(len(classes))
-        plt.xticks(tick_marks, classes, rotation=45)
-        plt.yticks(tick_marks, classes)
-
-        fmt = 'd'
-        thresh = cm.max() / 2.
-        for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
-            plt.text(j, i, format(cm[i, j], fmt),
-                     horizontalalignment="center",
-                     color="white" if cm[i, j] > thresh else "black")
-
-        plt.ylabel('True label')
-        plt.xlabel('Predicted label')
-        plt.tight_layout()
-        plt.savefig(fname='plots/' + 'CM - ' + title, dpi=300, format='png')
-        plt.show()
 
 
 sampling = Sampling()
