@@ -4,8 +4,7 @@ Example sampling techniques using KDD Cup 1999 IDS dataset
 ==========================================================
 
 The following examples demonstrate various under and over-sampling techniques
-for a dataset in which column is extremely imbalanced different over-sampling algorithms available in the
-imbalanced-learn package.
+for a dataset in which classes are extremely imbalanced
 
 Visualisations using both linear and radial functions to illustrate separability
 
